@@ -26,8 +26,10 @@ try:
     from asyncio import sleep 
     from decouple import config
     import re
+    import logging
     import requests
     import aiohttp
+    from difflib import get_close_matches
     import random
     import uuid
     import base64
@@ -41,9 +43,11 @@ try:
 except ImportError:
     import os
     if sys.platform == 'win32' or 'win64':
-     subprocess.check_call([sys.executable, "-m", "pip", "install", '-r' , 'requirements.txt'])
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", '-r', 'requirements.txt'])
     else:
-     subprocess.check_call([sys.executable, "-m", "pip3", "install", '-r' , 'requirements.txt'])
+        subprocess.check_call(
+            [sys.executable, "-m", "pip3", "install", '-r', 'requirements.txt'])
     import sys
     import discord
     from discord.ext import commands, tasks
@@ -73,7 +77,6 @@ colorama.init()
 
 auto_messages = {}
 
-
 def load_autoresponder_data():
     try:
         with open('autoresponder_data.json', 'r') as file:
@@ -81,21 +84,20 @@ def load_autoresponder_data():
     except FileNotFoundError:
         return {}
 
-
 def save_autoresponder_data(data):
     with open('autoresponder_data.json', 'w') as file:
         json.dump(data, file)
 
 infection = int(config("userid"))
 AUTHORIZED_USERS = [infection]  
+CHANNEL_ID_FILE = 'restart.json'
 prefix = config('prefix', default='')
 bot = commands.Bot(command_prefix=prefix, self_bot=True, help_command=None)
-xfected_version = "v2.2.5"
+xfected_version = "v2.2.0"
 fake = Faker()
 
 def is_authorized(ctx):
     return ctx.author.id in AUTHORIZED_USERS
-
 
 @bot.command(description="Adds Auto Responses", aliases=['addresponse', 'aar'])
 async def addar(ctx, trigger, *, response):
@@ -125,7 +127,6 @@ async def listar(ctx):
         await ctx.send(response, delete_after=10)
     else:
         await ctx.send('No AR found', delete_after=10)
-
 
 @bot.command(description="starts spammin the msges")
 async def spam(ctx, xt: int, *, msg):
@@ -177,21 +178,34 @@ async def help(ctx, *, cmdname=None):
         hmsg = hmsg[:-2]
         await ctx.send(hmsg, delete_after=60)
     else:
-        command = bot.get_command(cmdname)
-        if not command:
-            await ctx.send(f"Cmd `{cmdname}` not found", delete_after=10)
+        all_commands = bot.commands
+        found_command = None
+        for command in all_commands:
+            if command.name == cmdname or cmdname in command.aliases:
+                found_command = command
+                break
+
+        if not found_command:
+            await ctx.send(f"Command `{cmdname}` not found.")
             return
 
-        xfechelpmsg = f"# Xfected Selfbot\n"
-        xfechelpmsg += f"**{command.name}** : _{command.description}_\n"
-        xfechelpmsg += f"- _`{prefix}{command.name} {command.signature}`_\n"
-        await ctx.send(xfechelpmsg, delete_after=20)
+        help_message = f"\n# Xfected SELFBOT - {command.name} Command\n\n"
+        help_message += f"**__{command.name}__** : {command.description}\n"
+        help_message += f"- _`{ctx.prefix}{command.name} {command.signature}`_\n"
+        await ctx.send(help_message, delete_after=20)
 
 @bot.command(aliases=['reboot'], description="restart the Xfected")
 async def restart(ctx):
-    restmsg = await ctx.send("# Xfected Rebooting !!")
-    os.execv(sys.executable, ['python'] + sys.argv)
-    await restmsg.channel.send("Rebooted")
+    owner_id = config('userid')
+    if owner_id and ctx.author.id == int(owner_id):
+        await ctx.send("# Xfected Rebooting !!", delete_after=1)
+        await ctx.message.delete()
+        save_channel_id(ctx.channel.id)
+        await bot.close()
+        subprocess.run([sys.executable, "xfected.py"])
+    else:
+        await ctx.send("You do not have permission to restart the bot.")
+        await ctx.message.delete()
     
 @bot.command(description="converts text to ascii")
 async def asci(ctx, *, text):
@@ -202,7 +216,6 @@ async def asci(ctx, *, text):
     xfecascb = f'```\n{border}\n| {xfecasc.strip()} |\n{border}\n```'
 
     await ctx.send(xfecascb, delete_after=45)
-
 
 @bot.command(aliases=['ui', 'whois'], description="gives userinfo")
 async def userinfo(ctx, member: discord.Member = None):
@@ -218,7 +231,6 @@ async def userinfo(ctx, member: discord.Member = None):
     ]
     resp = '\n'.join(xfecui)
     await ctx.send(f"{resp}", delete_after=60)
-
 
 @bot.command(description="trolls user with hack cmd")
 async def hack(ctx, member: discord.Member = None):
@@ -265,7 +277,6 @@ async def hack(ctx, member: discord.Member = None):
 
     await progress_message.edit(content=resp)
 
-
 @bot.command(aliases=['av', 'ava'], description="shows avatar of users")
 async def avatar(ctx, member: discord.Member = None):
     member = member or ctx.author
@@ -273,18 +284,20 @@ async def avatar(ctx, member: discord.Member = None):
     avatar_url = member.avatar_url
     await ctx.send(f"[Xfected]({avatar_url})", delete_after=45)
 
-
 @bot.command(aliases=['latency'], description="shows selfbot latency")
 async def ping(ctx):
-    latency = round(bot.latency * 1000)  
+    latency = round(bot.latency * 100)
     
     await ctx.send(f'**~ {latency}ms**', delete_after=10)
 
-
 @bot.command(aliases=['247'], description="connect selfbot to vcs")
-async def connectvc(ctx, channel_id):
+async def connectvc(ctx, channel_id: int = None):
     try:
-        channel = bot.get_channel(int(channel_id))
+        if channel_id is None:
+            raise commands.MissingRequiredArgument(
+                "channel_id is a required argument that is missing")
+
+        channel = bot.get_channel(channel_id)
 
         if channel is None:
             return await ctx.send("- invalid vc id", delete_after=10)
@@ -293,21 +306,25 @@ async def connectvc(ctx, channel_id):
             permissions = channel.permissions_for(ctx.guild.me)
 
             if not permissions.connect:
-                return await ctx.send("", delete_after=10)
+                return await ctx.send("- not have perms to connect", delete_after=10)
 
             voice_channel = await channel.connect()
             await ctx.send(f"- Xfected is now connected~ **#{channel.name}**", delete_after=10)
 
         else:
             await ctx.send("- invalid vc id", delete_after=10)
+    except commands.MissingRequiredArgument as e:
+        await ctx.send(f"- {e}", delete_after=10)
+    except commands.BadArgument as e:
+        await ctx.send(f"- {e}", delete_after=10)
     except discord.errors.ClientException:
         await ctx.send("- selfbot is already in a vc", delete_after=10)
-    except discord.Forbidden:
+    except discord.errors.Forbidden:
         await ctx.send("- not have perms to connect", delete_after=10)
     except ValueError:
         await ctx.send("- invalid vc id", delete_after=10)
     except Exception as e:
-        await ctx.send(f"- an error occured", delete_after=10)
+        await ctx.send(f"- an error occurred, please type **`{prefix}help 247`**", delete_after=10)
 
 @bot.command(aliases=['purge'], description="purges your msges")
 async def clear(ctx, times: int):
@@ -324,7 +341,6 @@ async def clear(ctx, times: int):
         await message.delete()
     
     await ctx.send(f"- Cleared {times}x msges", delete_after=15)
-
 
 bot.xfectstime = datetime.datetime.utcnow()
 @bot.command(aliases=['selfbot'], description="shows yours stats")
@@ -347,7 +363,6 @@ async def stats(ctx):
 
     await ctx.send("**# Xfected Stats**\n" + "\n".join(xfectst), delete_after=45)
 
-
 @bot.command(aliases=['cltc'], description="shows real time ltc price")
 async def ltcprice(ctx):
     url = 'https://api.coingecko.com/api/v3/coins/litecoin'
@@ -358,8 +373,6 @@ async def ltcprice(ctx):
         await ctx.send(f"The current price of Litecoin (LTC) is ${price:.2f}", delete_after=45)
     else:
         await ctx.send("Failed to fetch Litecoin price", delete_after=10)
-
-
 
 @bot.command(aliases=['nitro'], description="gives fake nitro")
 async def fakenitro(ctx):
@@ -373,7 +386,6 @@ async def nickscan(ctx):
         member = guild.get_member(bot.user.id)
         if member is not None and member.nick is not None:
             await ctx.send(f"- **Server {guild.name}** - ***{member.nick}***\n")
-
 
 @bot.command(aliases=['ip'], description="shows ip info")
 async def iplookup(ctx, ip):
@@ -406,8 +418,6 @@ async def iplookup(ctx, ip):
 
 @bot.command(aliases=['bal', 'ltcbal'], description="shows ltc balance")
 async def getbal(ctx, ltcaddress):
-    
-    
     response = requests.get(f'https://api.blockcypher.com/v1/ltc/main/addrs/{ltcaddress}/balance')
     if response.status_code == 200:
         data = response.json()
@@ -417,16 +427,12 @@ async def getbal(ctx, ltcaddress):
     else:
         await ctx.send("- Invalid LTC Addy", delete_after=10)
         return
-
-    
     cg_response = requests.get('https://api.coingecko.com/api/v3/simple/price?ids=litecoin&vs_currencies=usd')
     if cg_response.status_code == 200:
         usd_price = cg_response.json()['litecoin']['usd']
     else:
         await ctx.send("- API Ratelimted", delete_after=10)
         return
-    
-    
     usd_balance = balance * usd_price
     usd_total_balance = total_balance * usd_price
     usd_unconfirmed_balance = unconfirmed_balance * usd_price
@@ -435,11 +441,10 @@ async def getbal(ctx, ltcaddress):
     message += f"- Current LTC~ **${usd_balance:.2f} USD**\n"
     message += f"- Total LTC Received~ **${usd_total_balance:.2f} USD**\n"
     message += f"- Unconfirmed LTC~ **${usd_unconfirmed_balance:.2f} USD**"
-    
-    
     response_message = await ctx.send(message, delete_after=30)
 
-@bot.command(description="rate anyones level of gayness")
+
+@bot.command(description="rates anyones level of gayness")
 async def gayrate(ctx, user: discord.Member = None):
     if user is None:
         user = ctx.author
@@ -503,7 +508,6 @@ async def roast(ctx, user: discord.Member = None):
         print("Error:", e)
         await ctx.reply("Try again later", delete_after=10)
 
-
 @bot.command(description="scrape msges")
 async def scrap(ctx, limit: int = 10000):
     channel = ctx.channel
@@ -557,7 +561,6 @@ async def tokengrab(ctx, member: discord.Member):
     else:
         token = data[xfecmemid]
         await msg.edit(content=f"```yaml\n+ Xfected token grabbed for {member}\nToken~ {token}```")
-    
 
 def infectedxd(title):
     system = platform.system()
@@ -626,7 +629,6 @@ ____  ___ _____              __             .___
                 w = Fore.WHITE
                 print(f"{y}[{b}+{y}]{w} You are using old version ", current_version)
                 print(f"{y}[{b}+{y}]{w} Latest Version Detected: {latest_version}\nhttps://github.com/infectedxd/Xfected-Selfbot/releases/tag/{latest_version}")
-                
 
     try:
         call_check_repo()
@@ -644,6 +646,57 @@ async def on_message(message):
         response = autoresponder_data[content]
         await message.channel.send(response)
     await bot.process_commands(message)  
+
+
+def save_channel_id(channel_id):
+    try:
+        with open(CHANNEL_ID_FILE, 'r') as file:
+            config_data = json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        config_data = {}
+    config_data['channel_id'] = channel_id
+
+    with open(CHANNEL_ID_FILE, 'w') as file:
+        json.dump(config_data, file, indent=2)
+
+
+def load_channel_id():
+    try:
+        with open(CHANNEL_ID_FILE, 'r') as file:
+            config_data = json.load(file)
+            return int(config_data.get('channel_id', None))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+@bot.event
+async def on_connect():
+    channel_id = load_channel_id()
+
+    if channel_id:
+        try:
+            original_channel = await bot.fetch_channel(channel_id)
+            await original_channel.send("```ini\n[xfected SelfBot] has been restarted and is ready to be used! ```",
+                                        delete_after=10)
+        except discord.errors.NotFound:
+            pass
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        command = ctx.message.content.split()[0][1:]
+        available_commands = [cmd.name for cmd in bot.commands]
+
+        suggestions = get_close_matches(
+            command, available_commands, n=3, cutoff=0.6)
+
+        if suggestions:
+            suggestion_str = "\n".join(
+                f"- {suggestion}" for suggestion in suggestions)
+            await ctx.send(f"```css\nDid you mean one of these?\n{suggestion_str}```")
+        else:
+            await ctx.send("```ini\n[Command] not found. No suggestions available.```")
 
 infected = config('token')
 
